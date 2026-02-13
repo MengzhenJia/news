@@ -96,6 +96,26 @@ def parse_bool_env(value: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def parse_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def parse_float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 def parse_recipients(raw: str) -> List[str]:
     if not raw:
         return []
@@ -518,14 +538,14 @@ def send_html_email(
 def run_pipeline(args: argparse.Namespace) -> int:
     logger = get_logger()
 
-    request_timeout = int(os.getenv("REQUEST_TIMEOUT_SEC", "20"))
-    http_retries = int(os.getenv("HTTP_RETRY_COUNT", "3"))
-    llm_retries = int(os.getenv("LLM_RETRY_COUNT", "3"))
+    request_timeout = parse_int_env("REQUEST_TIMEOUT_SEC", 20)
+    http_retries = parse_int_env("HTTP_RETRY_COUNT", 3)
+    llm_retries = parse_int_env("LLM_RETRY_COUNT", 3)
     llm_key = os.getenv("LLM_API_KEY", "")
     llm_base_url = os.getenv("LLM_BASE_URL", "https://api.minimax.chat/v1")
     llm_model = os.getenv("LLM_MODEL", "MiniMax-Text-01")
-    llm_temperature = float(os.getenv("LLM_TEMPERATURE", "0.2"))
-    llm_max_input_chars = int(os.getenv("LLM_MAX_INPUT_CHARS", "12000"))
+    llm_temperature = parse_float_env("LLM_TEMPERATURE", 0.2)
+    llm_max_input_chars = parse_int_env("LLM_MAX_INPUT_CHARS", 12000)
     tz = ZoneInfo(args.timezone)
 
     if not llm_key:
