@@ -380,6 +380,45 @@ def summarize_article(
     return request_with_retry(_call, attempts, (Exception,))
 
 
+def count_cjk_chars(text: str) -> int:
+    return sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+
+
+def is_chinese_summary(text: str, min_cjk_chars: int = 12) -> bool:
+    if not text:
+        return False
+    return count_cjk_chars(text) >= min_cjk_chars
+
+
+def translate_summary_to_chinese(
+    client: OpenAI,
+    model: str,
+    summary_text: str,
+    attempts: int,
+) -> str:
+    system_prompt = "你是专业编辑。请把输入内容翻译并整理为自然、客观、专业的中文摘要。"
+    user_prompt = (
+        "请将下面内容转成中文摘要，输出3-5句并保留关键信息，不要新增事实：\n\n"
+        f"{summary_text}"
+    )
+
+    def _call() -> str:
+        response = client.chat.completions.create(
+            model=model,
+            temperature=0.2,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        text = (response.choices[0].message.content or "").strip()
+        if not text:
+            raise RuntimeError("Empty translated summary from LLM")
+        return text
+
+    return request_with_retry(_call, attempts, (Exception,))
+
+
 def score_article(item: Dict[str, Any]) -> float:
     published = item["published_utc"]
     age_hours = max(0.0, (dt.datetime.now(dt.timezone.utc) - published).total_seconds() / 3600.0)
@@ -396,10 +435,30 @@ def resolve_content_text(primary: str, fallback: str, title: str) -> str:
     return (title or "").strip()
 
 
-def build_fallback_cn_summary(content_text: str, max_sentences: int = 3, max_chars: int = 220) -> str:
+def build_fallback_cn_summary(
+    content_text: str,
+    title: str = "",
+    max_sentences: int = 3,
+    max_chars: int = 220,
+) -> str:
     text = " ".join((content_text or "").split())
     if not text:
+        if title:
+            return f"要点：文章《{title}》暂无可用正文，建议阅读原文获取详情。"
         return "要点：暂无可用正文，建议阅读原文获取详情。"
+    if count_cjk_chars(text) < 8:
+        terms = re.findall(r"[A-Za-z][A-Za-z0-9_/-]{2,}", text)
+        dedup_terms: List[str] = []
+        for t in terms:
+            if t.lower() in {x.lower() for x in dedup_terms}:
+                continue
+            dedup_terms.append(t)
+            if len(dedup_terms) >= 4:
+                break
+        name = f"《{title}》" if title else "该文章"
+        if dedup_terms:
+            return f"要点：{name}包含重要技术更新。关键词：{'、'.join(dedup_terms)}。建议点击原文查看完整细节。"
+        return f"要点：{name}提供了最新技术动态与背景信息，建议点击原文查看完整内容。"
     sentences = [s.strip() for s in re.split(r"[。！？!?]\s*", text) if s.strip()]
     if not sentences:
         clipped = text[:max_chars]
@@ -675,10 +734,19 @@ def run_pipeline(args: argparse.Namespace) -> int:
                 max_input_chars=llm_max_input_chars,
                 attempts=llm_retries,
             )
+            if not is_chinese_summary(summary_zh):
+                summary_zh = translate_summary_to_chinese(
+                    client=client,
+                    model=llm_model,
+                    summary_text=summary_zh,
+                    attempts=llm_retries,
+                )
+            if not is_chinese_summary(summary_zh):
+                raise RuntimeError("Summary is not Chinese after translation")
             stats["summary_ok"] += 1
         except Exception as exc:
             stats["summary_fail"] += 1
-            summary_zh = build_fallback_cn_summary(content_text)
+            summary_zh = build_fallback_cn_summary(content_text, title=entry["title"])
             log_event(
                 logger,
                 "summary_error",

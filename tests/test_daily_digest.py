@@ -8,6 +8,7 @@ from daily_digest import (
     choose_headline,
     estimate_read_minutes,
     filter_recent_entries,
+    is_chinese_summary,
     parse_str_env,
     parse_entry_published,
     parse_opml_feeds,
@@ -77,9 +78,19 @@ class DailyDigestTests(unittest.TestCase):
         self.assertIn("第三段讲了产业影响", summary)
         self.assertNotIn("第四段补充细节", summary)
 
+    def test_build_fallback_cn_summary_for_english_content(self):
+        text = "New AI benchmark shows improvement in coding and reasoning with lower latency."
+        summary = build_fallback_cn_summary(text, title="Test Article")
+        self.assertTrue(summary.startswith("要点："))
+        self.assertIn("《Test Article》", summary)
+
     def test_parse_str_env_uses_default_when_blank(self):
         with patch.dict("os.environ", {"LLM_MODEL": "   "}):
             self.assertEqual("MiniMax-Text-01", parse_str_env("LLM_MODEL", "MiniMax-Text-01"))
+
+    def test_is_chinese_summary(self):
+        self.assertTrue(is_chinese_summary("这是一个中文摘要，包含足够的中文字符用于判断。"))
+        self.assertFalse(is_chinese_summary("This is an English summary only."))
 
 
 if __name__ == "__main__":
