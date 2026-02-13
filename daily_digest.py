@@ -20,6 +20,7 @@ import json
 import logging
 import math
 import os
+import re
 import smtplib
 import time
 import xml.etree.ElementTree as ET
@@ -114,6 +115,14 @@ def parse_float_env(name: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return default
+
+
+def parse_str_env(name: str, default: str) -> str:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip()
+    return value if value else default
 
 
 def parse_recipients(raw: str) -> List[str]:
@@ -387,6 +396,23 @@ def resolve_content_text(primary: str, fallback: str, title: str) -> str:
     return (title or "").strip()
 
 
+def build_fallback_cn_summary(content_text: str, max_sentences: int = 3, max_chars: int = 220) -> str:
+    text = " ".join((content_text or "").split())
+    if not text:
+        return "要点：暂无可用正文，建议阅读原文获取详情。"
+    sentences = [s.strip() for s in re.split(r"[。！？!?]\s*", text) if s.strip()]
+    if not sentences:
+        clipped = text[:max_chars]
+        return f"要点：{clipped}。"
+    selected = sentences[:max_sentences]
+    merged = "；".join(selected)
+    if len(merged) > max_chars:
+        merged = merged[: max_chars - 1].rstrip() + "…"
+    if not merged.endswith(("。", "！", "？")):
+        merged += "。"
+    return f"要点：{merged}"
+
+
 def choose_headline(items: Sequence[ArticleItem]) -> Optional[ArticleItem]:
     if not items:
         return None
@@ -541,9 +567,9 @@ def run_pipeline(args: argparse.Namespace) -> int:
     request_timeout = parse_int_env("REQUEST_TIMEOUT_SEC", 20)
     http_retries = parse_int_env("HTTP_RETRY_COUNT", 3)
     llm_retries = parse_int_env("LLM_RETRY_COUNT", 3)
-    llm_key = os.getenv("LLM_API_KEY", "")
-    llm_base_url = os.getenv("LLM_BASE_URL", "https://api.minimax.chat/v1")
-    llm_model = os.getenv("LLM_MODEL", "MiniMax-Text-01")
+    llm_key = parse_str_env("LLM_API_KEY", "")
+    llm_base_url = parse_str_env("LLM_BASE_URL", "https://api.minimax.chat/v1")
+    llm_model = parse_str_env("LLM_MODEL", "MiniMax-Text-01")
     llm_temperature = parse_float_env("LLM_TEMPERATURE", 0.2)
     llm_max_input_chars = parse_int_env("LLM_MAX_INPUT_CHARS", 12000)
     tz = ZoneInfo(args.timezone)
@@ -652,7 +678,15 @@ def run_pipeline(args: argparse.Namespace) -> int:
             stats["summary_ok"] += 1
         except Exception as exc:
             stats["summary_fail"] += 1
-            summary_zh = f"摘要生成失败：{exc.__class__.__name__}。"
+            summary_zh = build_fallback_cn_summary(content_text)
+            log_event(
+                logger,
+                "summary_error",
+                source=entry["source"],
+                title=entry["title"],
+                error_type=exc.__class__.__name__,
+                error=str(exc)[:300],
+            )
 
         read_minutes = estimate_read_minutes(content_text)
         article = ArticleItem(

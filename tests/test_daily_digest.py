@@ -1,11 +1,14 @@
 import datetime as dt
 import unittest
+from unittest.mock import patch
 
 from daily_digest import (
     ArticleItem,
+    build_fallback_cn_summary,
     choose_headline,
     estimate_read_minutes,
     filter_recent_entries,
+    parse_str_env,
     parse_entry_published,
     parse_opml_feeds,
     resolve_content_text,
@@ -65,6 +68,18 @@ class DailyDigestTests(unittest.TestCase):
         self.assertEqual("primary", resolve_content_text(" primary ", "fallback", "title"))
         self.assertEqual("fallback", resolve_content_text("", " fallback ", "title"))
         self.assertEqual("title", resolve_content_text("", "", " title "))
+
+    def test_build_fallback_cn_summary(self):
+        text = "第一段讲了新模型发布。第二段讲了性能提升。第三段讲了产业影响。第四段补充细节。"
+        summary = build_fallback_cn_summary(text, max_sentences=3)
+        self.assertTrue(summary.startswith("要点："))
+        self.assertIn("第一段讲了新模型发布", summary)
+        self.assertIn("第三段讲了产业影响", summary)
+        self.assertNotIn("第四段补充细节", summary)
+
+    def test_parse_str_env_uses_default_when_blank(self):
+        with patch.dict("os.environ", {"LLM_MODEL": "   "}):
+            self.assertEqual("MiniMax-Text-01", parse_str_env("LLM_MODEL", "MiniMax-Text-01"))
 
 
 if __name__ == "__main__":
